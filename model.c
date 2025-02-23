@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < n_h1; i++) {
         for (int j = 0; j < INPUT_SIZE; j++) {
             w1[i][j] = init(INPUT_SIZE, n_h1);
-            printf("W1[%d][%d]: %f\n", i, j, w1[i][j]);
+            // printf("W1[%d][%d]: %f\n", i, j, w1[i][j]);
         }
         b1[i] = 0;
     }
@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < n_h2; i++) {
         for (int j = 0; j < n_h1; j++) {
             w2[i][j] = init(n_h1, n_h2);
-            printf("W2[%d][%d]: %f\n", i, j, w2[i][j]);
+            // printf("W2[%d][%d]: %f\n", i, j, w2[i][j]);
         }
         b2[i] = 0;
     }
@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < OUTPUT_SIZE; i++) {
         for (int j = 0; j < n_h2; j++) {
             w3[i][j] = init(n_h2, OUTPUT_SIZE);
-            printf("W3[%d][%d]: %f\n", i, j, w3[i][j]);
+            // printf("W3[%d][%d]: %f\n", i, j, w3[i][j]);
         }
         b3[i] = 0;
     }
