@@ -35,12 +35,14 @@ void shuffle_data(float* images, int* labels, int num_images, int img_dim) {
 }
 
 void matrix_add(float* res, float* a, float* b, int x, int y) {
+    #pragma omp parallel for
     for (int i = 0; i < x * y; i++) {
         res[i] = a[i] + b[i];
     }
 }
 
 void matrix_difference(float* res, float* a, float* b, int x, int y) {
+    #pragma omp parallel for
     for (int i = 0; i < x * y; i++) {
         res[i] = a[i] - b[i];
     }
@@ -104,6 +106,7 @@ void tiled_matrix_multiply_transpose2(float* res, float* a, float* b, int x, int
 }
 
 void matrix_copy(float* res, float* a, int x, int y) {
+    #pragma omp parallel for
     for (int i = 0; i < x * y; i++) {
         res[i] = a[i];
     }
@@ -112,6 +115,8 @@ void matrix_copy(float* res, float* a, int x, int y) {
 void weighted_product_relu(float* res, float* w, float* a, float* b, int x, int y, int z) {
     tiled_matrix_multiply(res, w, a, x, y, z);
     matrix_add(res, res, b, x, z);
+
+    #pragma omp parallel for
     for (int i = 0; i < x * z; i++) {
         res[i] = fmaxf(0, res[i]);
     }
@@ -120,6 +125,8 @@ void weighted_product_relu(float* res, float* w, float* a, float* b, int x, int 
 void weighted_product_sigmoid(float* res, float* w, float* a, float* b, int x, int y, int z) {
     tiled_matrix_multiply(res, w, a, x, y, z);
     matrix_add(res, res, b, x, z);
+
+    #pragma omp parallel for
     for (int i = 0; i < x * z; i++) {
         res[i] = 1.0f / (1.0f + expf(-res[i]));
     }
@@ -131,6 +138,8 @@ float* init_1D(int m, int n) {
 
 float* init_xavier(int m, int n) {
     float* mat = init_1D(m, n);
+
+    #pragma omp parallel for
     for (int i = 0; i < m * n; i++) {
         mat[i] = xavier(m, n);
     }
@@ -139,6 +148,8 @@ float* init_xavier(int m, int n) {
 
 float* init_zero(int m, int n) {
     float* mat = init_1D(m, n);
+
+    #pragma omp parallel for
     for (int i = 0; i < m * n; i++) {
         mat[i] = 0.0f;
     }
@@ -146,6 +157,8 @@ float* init_zero(int m, int n) {
 }
 
 void update_weights(float* w, float* d_w, int x, int y, float alpha, int m) {
+
+    #pragma omp parallel for
     for (int i = 0; i < x * y; i++) {
         w[i] -= (alpha * d_w[i]) / m;
         d_w[i] = 0.0f;
@@ -153,6 +166,8 @@ void update_weights(float* w, float* d_w, int x, int y, float alpha, int m) {
 }
 
 void reset(float *a, int x, int y) {
+
+    #pragma omp parallel for
     for (int i = 0; i < x * y; i++) {
         a[i] = 0.0f;
     }
@@ -224,6 +239,7 @@ int main(int argc, char** argv) {
         for (int k = 0; k < NUM_TRAIN / m; k++) {
             float C = 0.0f;
 
+            #pragma omp parallel for
             for (int x = 0; x < m; x++) {
                 for (int i = 0; i < INPUT_SIZE; i++) {
                     in[i * m + x] = train_image[(k * m) + x][i];
@@ -242,6 +258,7 @@ int main(int argc, char** argv) {
 
             // SGD calculation
             // Output layer
+            #pragma omp parallel for
             for (int x = 0; x < m; x++) {
                 int id = k * m + x;
                 y[train_label[id] * m + x] = 1.0f;
@@ -253,19 +270,23 @@ int main(int argc, char** argv) {
 
             // Hidden layer 2
             tiled_matrix_multiply_transpose1(y_h2, w3, error_out, OUTPUT_SIZE, n_h2, m);
+
+            #pragma omp parallel for
             for (int i = 0; i < n_h2 * m; i++) {
                 error_h2[i] = (h2[i] > 0) ? y_h2[i] : 0;
+                d_b2[i] = error_h2[i];
             }
             tiled_matrix_multiply_transpose2(d_w2, error_h2, h1, n_h2, m, n_h1);
-            matrix_copy(d_b2, error_h2, n_h2, m);
 
             // Hidden layer 1
             tiled_matrix_multiply_transpose1(y_h1, w2, error_h2, n_h2, n_h1, m);
+
+            #pragma omp parallel for
             for (int i = 0; i < n_h1 * m; i++) {
                 error_h1[i] = (h1[i] > 0) ? y_h1[i] : 0;
+                d_b1[i] = error_h1[i];
             }
             tiled_matrix_multiply_transpose2(d_w1, error_h1, in, n_h1, m, INPUT_SIZE);
-            matrix_copy(d_b1, error_h1, n_h1, m);
 
             // Back propagation
             update_weights(w1, d_w1, n_h1, INPUT_SIZE, alpha, m);
@@ -286,6 +307,7 @@ int main(int argc, char** argv) {
         int fail_ct = 0;
         start_time = omp_get_wtime();
         for (int k = 0; k < NUM_TEST / m; k++) {
+            #pragma omp parallel for
             for (int x = 0; x < m; x++) {
                 for (int i = 0; i < INPUT_SIZE; i++) {
                     in[i * m + x] = test_image[k * m + x][i];

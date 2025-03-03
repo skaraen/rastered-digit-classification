@@ -5,7 +5,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
-#include "mnist.h"
+#include "mnist_gpu.h"
 
 #define INPUT_SIZE 784
 #define OUTPUT_SIZE 10
@@ -109,8 +109,10 @@ __host__ void matrix_copy(float* res, float* a, int x, int y) {
 
 __host__ void weighted_product_relu(float* h_res, float* d_res, float* d_w, float* d_a, float *d_b, int x, int y, int z, int nblocks, int ntpb) {
     matrix_multiply_kernel<<<nblocks, ntpb>>>(d_res, d_w, d_a, x, y, z);
+    cudaDeviceSynchronize();
     matrix_add_kernel<<<nblocks, ntpb>>>(d_res, d_res, d_b, x, z);
-    cudaMemcpy(h_res, d_res, x * z, cudaMemcpyDeviceToHost);
+    cudaDeviceSynchronize();
+    cudaMemcpy(h_res, d_res, x * z * sizeof(float), cudaMemcpyDeviceToHost);
 
     for (int i = 0; i < x * z; i++) {
         h_res[i] = fmaxf(0, h_res[i]);
@@ -119,8 +121,10 @@ __host__ void weighted_product_relu(float* h_res, float* d_res, float* d_w, floa
 
 __host__ void weighted_product_sigmoid(float* h_res, float* d_res, float* d_w, float* d_a, float *d_b, int x, int y, int z, int nblocks, int ntpb) {
     matrix_multiply_kernel<<<nblocks, ntpb>>>(d_res, d_w, d_a, x, y, z);
+    cudaDeviceSynchronize();
     matrix_add_kernel<<<nblocks, ntpb>>>(d_res, d_res, d_b, x, z);
-    cudaMemcpy(h_res, d_res, x * z, cudaMemcpyDeviceToHost);
+    cudaDeviceSynchronize();
+    cudaMemcpy(h_res, d_res, x * z * sizeof(float), cudaMemcpyDeviceToHost);
 
     float sum[z];
     for (int k = 0; k < z; k++) {
@@ -164,7 +168,7 @@ __host__ float* init_zero(int m, int n) {
 __host__ void update_weights(float *w, float *del_w, int x, int y, float alpha, int m) {
     for (int i = 0; i < x * y; i++) {
         w[i] -= (alpha * del_w[i]) / m;
-        del_w[i] = 0.0f
+        del_w[i] = 0.0f;
     }
 }
 
@@ -235,55 +239,55 @@ int main(int argc, char** argv) {
     float *d_in, *d_h1, *d_h2, *d_out, *d_w1, *d_w2, *d_w3, *d_b1, *d_b2, *d_b3, *d_del_w1, *d_del_w2, *d_del_w3, *d_del_b1, *d_del_b2, *d_del_b3, *d_error_out, *d_error_h1, *d_error_h2, *d_y, *d_y_h1, *d_y_h2;
 
      // Initialize network layers
-    cudaMalloc((void**)&d_in, INPUT_SIZE * m);
-    cudaMalloc((void**)&d_h1, n_h1 * m);
-    cudaMalloc((void**)&d_h2, n_h2 * m);
-    cudaMalloc((void**)&d_out, OUTPUT_SIZE * m);
+    cudaMalloc((void**)&d_in, INPUT_SIZE * m * sizeof(float));
+    cudaMalloc((void**)&d_h1, n_h1 * m * sizeof(float));
+    cudaMalloc((void**)&d_h2, n_h2 * m * sizeof(float));
+    cudaMalloc((void**)&d_out, OUTPUT_SIZE * m * sizeof(float));
 
     // Initialize weights
-    cudaMalloc((void**)&d_w1, n_h1 * INPUT_SIZE);
-    cudaMemcpy(d_w1, w1, n_h1 * INPUT_SIZE, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_w2, n_h2 * n_h1);
-    cudaMemcpy(d_w2, w2, n_h2 * n_h1, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_w3, OUTPUT_SIZE * n_h2);
-    cudaMemcpy(d_w3, w3, OUTPUT_SIZE * n_h2, cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_w1, n_h1 * INPUT_SIZE * sizeof(float));
+    cudaMemcpy(d_w1, w1, n_h1 * INPUT_SIZE * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_w2, n_h2 * n_h1 * sizeof(float));
+    cudaMemcpy(d_w2, w2, n_h2 * n_h1 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_w3, OUTPUT_SIZE * n_h2 * sizeof(float));
+    cudaMemcpy(d_w3, w3, OUTPUT_SIZE * n_h2 * sizeof(float), cudaMemcpyHostToDevice);
 
     // Initialize biases
-    cudaMalloc((void**)&d_b1, n_h1 * m);
-    cudaMemcpy(d_b1, b1, n_h1 * m, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_b2, n_h2 * m);
-    cudaMemcpy(d_b2, b2, n_h2 * m, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_b3, OUTPUT_SIZE * m);
-    cudaMemcpy(d_b3, b3, OUTPUT_SIZE * m, cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_b1, n_h1 * m * sizeof(float));
+    cudaMemcpy(d_b1, b1, n_h1 * m * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_b2, n_h2 * m * sizeof(float));
+    cudaMemcpy(d_b2, b2, n_h2 * m * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_b3, OUTPUT_SIZE * m * sizeof(float));
+    cudaMemcpy(d_b3, b3, OUTPUT_SIZE * m * sizeof(float), cudaMemcpyHostToDevice);
 
     // Initialize delta weights and biases
-    cudaMalloc((void**)&d_del_w1, n_h1 * INPUT_SIZE);
-    cudaMemcpy(d_del_w1, del_w1, n_h1 * INPUT_SIZE, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_del_w2, n_h2 * n_h1);
-    cudaMemcpy(d_del_w2, del_w2, n_h2 * n_h1, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_del_w3, OUTPUT_SIZE * n_h2);
-    cudaMemcpy(d_del_w3, del_w3, OUTPUT_SIZE * n_h2, cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_del_w1, n_h1 * INPUT_SIZE * sizeof(float));
+    cudaMemcpy(d_del_w1, del_w1, n_h1 * INPUT_SIZE * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_del_w2, n_h2 * n_h1 * sizeof(float));
+    cudaMemcpy(d_del_w2, del_w2, n_h2 * n_h1 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_del_w3, OUTPUT_SIZE * n_h2 * sizeof(float));
+    cudaMemcpy(d_del_w3, del_w3, OUTPUT_SIZE * n_h2 * sizeof(float), cudaMemcpyHostToDevice);
     
-    cudaMalloc((void**)&d_del_b1, n_h1 * m);
-    cudaMemcpy(d_del_b1, del_b1,  n_h1 * m, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_del_b2, n_h2 * m);
-    cudaMemcpy(d_del_b2, del_b2, n_h2 * m, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_del_b3, OUTPUT_SIZE * m);
-    cudaMemcpy(d_del_b3, del_b3, OUTPUT_SIZE * m, cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_del_b1, n_h1 * m * sizeof(float));
+    cudaMemcpy(d_del_b1, del_b1,  n_h1 * m * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_del_b2, n_h2 * m * sizeof(float));
+    cudaMemcpy(d_del_b2, del_b2, n_h2 * m * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_del_b3, OUTPUT_SIZE * m * sizeof(float));
+    cudaMemcpy(d_del_b3, del_b3, OUTPUT_SIZE * m * sizeof(float), cudaMemcpyHostToDevice);
 
-    cudaMalloc((void**)&d_error_out, OUTPUT_SIZE * m);
-    cudaMemcpy(d_error_out, error_out,  OUTPUT_SIZE * m, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_error_h2, n_h2 * m);
-    cudaMemcpy(d_error_h2, error_h2, n_h2 * m, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_error_h1, n_h1 * m);
-    cudaMemcpy(d_error_h1, error_h1, n_h1 * m, cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_error_out, OUTPUT_SIZE * m * sizeof(float));
+    cudaMemcpy(d_error_out, error_out,  OUTPUT_SIZE * m * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_error_h2, n_h2 * m * sizeof(float));
+    cudaMemcpy(d_error_h2, error_h2, n_h2 * m * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_error_h1, n_h1 * m * sizeof(float));
+    cudaMemcpy(d_error_h1, error_h1, n_h1 * m * sizeof(float), cudaMemcpyHostToDevice);
 
-    cudaMalloc((void**)&d_y, OUTPUT_SIZE * m);
-    cudaMemcpy(d_y, y,  OUTPUT_SIZE * m, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_y_h2, n_h2 * m);
-    cudaMemcpy(d_y_h2, y_h2, n_h2 * m, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_y_h1, n_h1 * m);
-    cudaMemcpy(d_y_h1, y_h1, n_h1 * m, cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_y, OUTPUT_SIZE * m * sizeof(float));
+    cudaMemcpy(d_y, y,  OUTPUT_SIZE * m * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_y_h2, n_h2 * m * sizeof(float));
+    cudaMemcpy(d_y_h2, y_h2, n_h2 * m * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_y_h1, n_h1 * m * sizeof(float));
+    cudaMemcpy(d_y_h1, y_h1, n_h1 * m * sizeof(float), cudaMemcpyHostToDevice);
 
     printf("Initialization done, training starts...\n");
 
@@ -293,7 +297,7 @@ int main(int argc, char** argv) {
     for (int epoch = 0; epoch < EPOCHS; epoch++) {
         float C_train = 0.0f;
         float C_test = 0.0f;
-        shuffle_data(&train_image[0][0], train_label, NUM_TRAIN, INPUT_SIZE);
+        // shuffle_data(&train_image[0][0], train_label, NUM_TRAIN, INPUT_SIZE);
 
         //printf("Images shuffled\n");
 
@@ -307,7 +311,7 @@ int main(int argc, char** argv) {
                     in[i * m + x] = train_image[(k * m) + x][i];
                 }
             }
-            cudaMemcpy(d_in, in,  INPUT_SIZE * m, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_in, in,  INPUT_SIZE * m * sizeof(float), cudaMemcpyHostToDevice);
 
             // Feed-forward
             weighted_product_relu(h1, d_h1, d_w1, d_in, d_b1, n_h1, INPUT_SIZE, m, nblocks, ntpb);
@@ -328,40 +332,44 @@ int main(int argc, char** argv) {
 
             matrix_difference(error_out, out, y, OUTPUT_SIZE, m);
             matrix_copy(del_b3, error_out, OUTPUT_SIZE, m);
-            cudaMemcpy(d_error_out, error_out,  OUTPUT_SIZE * m, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_error_out, error_out,  OUTPUT_SIZE * m * sizeof(float), cudaMemcpyHostToDevice);
             // cudaMemcpy(d_del_b3, del_b3, OUTPUT_SIZE * m, cudaMemcpyHostToDevice);
 
             // tiled_matrix_multiply_transpose2(del_w3, error_out, h2, OUTPUT_SIZE, m, n_h2);
             matrix_multiply_transpose2_kernel<<<nblocks, ntpb>>>(d_del_w3, d_error_out, h2, OUTPUT_SIZE, m, n_h2);
-            cudaMemcpy(del_w3, d_del_w3, OUTPUT_SIZE * n_h2, cudaMemcpyDeviceToHost);
+            cudaDeviceSynchronize();
+            cudaMemcpy(del_w3, d_del_w3, OUTPUT_SIZE * n_h2 * sizeof(float), cudaMemcpyDeviceToHost);
 
             // Hidden layer 2
             //tiled_matrix_multiply_transpose1(y_h2, w3, error_out, OUTPUT_SIZE, n_h2, m);
             matrix_multiply_transpose1_kernel<<<nblocks, ntpb>>>(d_y_h2, d_w3, d_error_out, OUTPUT_SIZE, n_h2, m);
-            cudaMemcpy(y_h2, d_y_h2, n_h2 * m, cudaMemcpyDeviceToHost);
+            cudaDeviceSynchronize();
+            cudaMemcpy(y_h2, d_y_h2, n_h2 * m * sizeof(float), cudaMemcpyDeviceToHost);
 
             for (int i = 0; i < n_h2 * m; i++) {
                 error_h2[i] = (h2[i] > 0) ? y_h2[i] : 0;
+                del_b2[i] = error_h2[i];
             }
-            cudaMemcpy(d_error_h2, error_h2, n_h2 * m, cudaMemcpyHostToDevice);
-            matrix_copy(del_b2, error_h2, n_h2, m);
+            cudaMemcpy(d_error_h2, error_h2, n_h2 * m * sizeof(float), cudaMemcpyHostToDevice);
 
             // tiled_matrix_multiply_transpose2(del_w2, error_h2, h1, n_h2, m, n_h1);
             matrix_multiply_transpose2_kernel<<<nblocks, ntpb>>>(d_del_w2, d_error_h2, d_h1, n_h2, m, n_h1);
-            cudaMemcpy(del_w2, d_del_w2, n_h2 * n_h1, cudaMemcpyDeviceToHost);
+            cudaDeviceSynchronize();
+            cudaMemcpy(del_w2, d_del_w2, n_h2 * n_h1 * sizeof(float), cudaMemcpyDeviceToHost);
 
             // Hidden layer 1
             // tiled_matrix_multiply_transpose1(y_h1, w2, error_h2, n_h2, n_h1, m);
             matrix_multiply_transpose1_kernel<<<nblocks, ntpb>>>(d_y_h1, d_w2, d_error_h2, n_h2, n_h1, m);
             for (int i = 0; i < n_h1 * m; i++) {
                 error_h1[i] = (h1[i] > 0) ? y_h1[i] : 0;
+                del_b1[i] = error_h1[i];
             }
-            cudaMemcpy(d_error_h1, error_h1, n_h1 * m, cudaMemcpyHostToDevice);
-            matrix_copy(del_b1, error_h1, n_h1, m);
+            cudaMemcpy(d_error_h1, error_h1, n_h1 * m * sizeof(float), cudaMemcpyHostToDevice);
 
             //tiled_matrix_multiply_transpose2(del_w1, error_h1, in, n_h1, m, INPUT_SIZE);
             matrix_multiply_transpose2_kernel<<<nblocks, ntpb>>>(d_del_w1, d_error_h1, d_in, n_h1, m, INPUT_SIZE);
-            cudaMemcpy(del_w1, d_del_w1, n_h1 * INPUT_SIZE, cudaMemcpyDeviceToHost);
+            cudaDeviceSynchronize();
+            cudaMemcpy(del_w1, d_del_w1, n_h1 * INPUT_SIZE * sizeof(float), cudaMemcpyDeviceToHost);
 
             update_weights(w1, del_w1, n_h1, INPUT_SIZE, alpha, m);
             update_weights(w2, del_w2, n_h2, n_h1, alpha, m);
@@ -371,16 +379,23 @@ int main(int argc, char** argv) {
             update_biases(b2, del_b2, n_h2, m, alpha, m);
             update_biases(b3, del_b3, OUTPUT_SIZE, m, alpha, m);
     
-            cudaMemcpy(d_w1, w1, n_h1 * INPUT_SIZE, cudaMemcpyHostToDevice);
-            cudaMemcpy(d_w2, w2, n_h2 * n_h1, cudaMemcpyHostToDevice);
-            cudaMemcpy(d_w3, w3, OUTPUT_SIZE * n_h2, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_w1, w1, n_h1 * INPUT_SIZE * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_w2, w2, n_h2 * n_h1 * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_w3, w3, OUTPUT_SIZE * n_h2 * sizeof(float), cudaMemcpyHostToDevice);
 
-            cudaMemcpy(d_b1, b1, n_h1 * m, cudaMemcpyHostToDevice);
-            cudaMemcpy(d_b2, b2, n_h2 * m, cudaMemcpyHostToDevice);
-            cudaMemcpy(d_b3, b3, OUTPUT_SIZE * m, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_b1, b1, n_h1 * m * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_b2, b2, n_h2 * m * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_b3, b3, OUTPUT_SIZE * m * sizeof(float), cudaMemcpyHostToDevice);
 
             C_train += C;
             reset(y, OUTPUT_SIZE, m);
+            cudaMemcpy(d_y, y,  OUTPUT_SIZE * m * sizeof(float), cudaMemcpyHostToDevice);
+
+            cudaError_t err = cudaGetLastError();
+            if (err != cudaSuccess) {
+                fprintf(stderr, "CUDA error after kernel launch: %s\n", cudaGetErrorString(err));
+                exit(1);
+            }
         }
         cudaEventRecord(end_train, 0);
         cudaEventSynchronize(end_train);
@@ -399,7 +414,7 @@ int main(int argc, char** argv) {
                     in[i * m + x] = test_image[(k * m) + x][i];
                 }
             }
-            cudaMemcpy(d_in, in,  INPUT_SIZE * m, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_in, in,  INPUT_SIZE * m * sizeof(float), cudaMemcpyHostToDevice);
 
             weighted_product_relu(h1, d_h1, d_w1, d_in, d_b1, n_h1, INPUT_SIZE, m, nblocks, ntpb);
             weighted_product_relu(h2, d_h2, d_w2, d_h1, d_b2, n_h2, n_h1, m, nblocks, ntpb);
@@ -484,5 +499,4 @@ int main(int argc, char** argv) {
     printf("Total inference time: %f seconds\n", total_test_time);
     printf("Learning rate: %f\n", alpha);
     printf("Batch size: %d\n", m);
-    printf("Number of threads: %d\n", nthreads);
 }
