@@ -2,9 +2,6 @@
 #include <stdio.h>
 #include <math.h>
 #include <time.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <curand_kernel.h>
 #include "mnist_gpu.h"
 
 #define INPUT_SIZE 784
@@ -111,6 +108,7 @@ __host__ void weighted_product_relu(float* h_res, float* d_res, float* d_w, floa
     matrix_multiply_kernel<<<nblocks, ntpb>>>(d_res, d_w, d_a, x, y, z);
     cudaDeviceSynchronize();
     matrix_add_kernel<<<nblocks, ntpb>>>(d_res, d_res, d_b, x, z);
+    cudaDeviceSynchronize();
     cudaMemcpy(h_res, d_res, x * z * sizeof(float), cudaMemcpyDeviceToHost);
 
     for (int i = 0; i < x * z; i++) {
@@ -122,6 +120,7 @@ __host__ void weighted_product_sigmoid(float* h_res, float* d_res, float* d_w, f
     matrix_multiply_kernel<<<nblocks, ntpb>>>(d_res, d_w, d_a, x, y, z);
     cudaDeviceSynchronize();
     matrix_add_kernel<<<nblocks, ntpb>>>(d_res, d_res, d_b, x, z);
+    cudaDeviceSynchronize();
     cudaMemcpy(h_res, d_res, x * z * sizeof(float), cudaMemcpyDeviceToHost);
 
     float sum[z];
@@ -198,7 +197,26 @@ int main(int argc, char** argv) {
     int nblocks = atoi(argv[5]);
     int ntpb = atoi(argv[6]);
 
-    load_mnist();
+    // load_mnist();
+
+    mnist_data *train_data;
+    unsigned int train_cnt;
+    int ret;
+
+    if (ret = mnist_load("./data/train-images-idx3-ubyte", "/data/train-labels-idx1-ubyte", &train_data, &train_cnt)) {
+        printf("An error occured: %d\n", ret);
+    } else {
+        printf("Train image count: %d\n", cnt);
+    }
+
+    mnist_data *test_data;
+    unsigned int test_cnt;
+
+    if (ret = mnist_load("./data/t10k-images-idx3-ubyte", "./data/t10k-labels-idx1-ubyte", &test_data, &test_cnt)) {
+        printf("An error occured: %d\n", ret);
+    } else {
+        printf("Test image count: %d\n", cnt);
+    }
 
     // Initialize network layers
     float *in = init_2D(INPUT_SIZE, m);
@@ -290,19 +308,17 @@ int main(int argc, char** argv) {
     printf("Initialization done, training starts...\n");
 
     float total_train_time, total_test_time = 0.0f;
+    double start_time, end_time;
     
     for (int epoch = 0; epoch < EPOCHS; epoch++) {
         float C_train = 0.0f;
         float C_test = 0.0f;
-        shuffle_data(&train_image[0][0], train_label, NUM_TRAIN, INPUT_SIZE);
-
-        printf("Shuffle done...starting epoch\n");
+        // shuffle_data(&train_image[0][0], train_label, NUM_TRAIN, INPUT_SIZE);
 
         // Train network
         cudaEventRecord(start_train, 0);
         for (int k = 0; k < NUM_TRAIN / m; k++) {
             float C = 0.0f;
-            cudaDeviceSynchronize();
 
             for (int x = 0; x < m; x++) {
                 for (int i = 0; i < INPUT_SIZE; i++) {
@@ -332,11 +348,13 @@ int main(int argc, char** argv) {
             matrix_copy(del_b3, error_out, OUTPUT_SIZE, m);
             cudaMemcpy(d_error_out, error_out,  OUTPUT_SIZE * m * sizeof(float), cudaMemcpyHostToDevice);
 
-            matrix_multiply_transpose2_kernel<<<nblocks, ntpb>>>(d_del_w3, d_error_out, d_h2, OUTPUT_SIZE, m, n_h2);
+            matrix_multiply_transpose2_kernel<<<nblocks, ntpb>>>(d_del_w3, d_error_out, h2, OUTPUT_SIZE, m, n_h2);
+            cudaDeviceSynchronize();
             cudaMemcpy(del_w3, d_del_w3, OUTPUT_SIZE * n_h2 * sizeof(float), cudaMemcpyDeviceToHost);
 
             // Hidden layer 2
             matrix_multiply_transpose1_kernel<<<nblocks, ntpb>>>(d_y_h2, d_w3, d_error_out, OUTPUT_SIZE, n_h2, m);
+            cudaDeviceSynchronize();
             cudaMemcpy(y_h2, d_y_h2, n_h2 * m * sizeof(float), cudaMemcpyDeviceToHost);
 
             for (int i = 0; i < n_h2 * m; i++) {
@@ -346,6 +364,7 @@ int main(int argc, char** argv) {
             cudaMemcpy(d_error_h2, error_h2, n_h2 * m * sizeof(float), cudaMemcpyHostToDevice);
 
             matrix_multiply_transpose2_kernel<<<nblocks, ntpb>>>(d_del_w2, d_error_h2, d_h1, n_h2, m, n_h1);
+            cudaDeviceSynchronize();
             cudaMemcpy(del_w2, d_del_w2, n_h2 * n_h1 * sizeof(float), cudaMemcpyDeviceToHost);
 
             // Hidden layer 1
@@ -357,6 +376,7 @@ int main(int argc, char** argv) {
             cudaMemcpy(d_error_h1, error_h1, n_h1 * m * sizeof(float), cudaMemcpyHostToDevice);
 
             matrix_multiply_transpose2_kernel<<<nblocks, ntpb>>>(d_del_w1, d_error_h1, d_in, n_h1, m, INPUT_SIZE);
+            cudaDeviceSynchronize();
             cudaMemcpy(del_w1, d_del_w1, n_h1 * INPUT_SIZE * sizeof(float), cudaMemcpyDeviceToHost);
 
             update_weights(w1, del_w1, n_h1, INPUT_SIZE, alpha, m);
@@ -378,6 +398,12 @@ int main(int argc, char** argv) {
             C_train += C;
             reset(y, OUTPUT_SIZE, m);
             cudaMemcpy(d_y, y,  OUTPUT_SIZE * m * sizeof(float), cudaMemcpyHostToDevice);
+
+            cudaError_t err = cudaGetLastError();
+            if (err != cudaSuccess) {
+                fprintf(stderr, "CUDA error after kernel launch: %s\n", cudaGetErrorString(err));
+                exit(1);
+            }
         }
         cudaEventRecord(end_train, 0);
         cudaEventSynchronize(end_train);
@@ -391,7 +417,6 @@ int main(int argc, char** argv) {
         cudaEventRecord(start_test, 0);
         int fail_ct = 0;
         for (int k = 0; k < NUM_TEST / m; k++) {
-            cudaDeviceSynchronize();
             for (int x = 0; x < m; x++) {
                 for (int i = 0; i < INPUT_SIZE; i++) {
                     in[i * m + x] = test_image[(k * m) + x][i];
@@ -477,9 +502,9 @@ int main(int argc, char** argv) {
     cudaFree(d_y);
 
     printf("Results of model training\n");
-    printf("Grind rate: %d\n", (int) ((NUM_TRAIN * EPOCHS) * 1000 / total_train_time));
-    printf("Total training time: %f seconds\n", total_train_time / 1000);
-    printf("Total inference time: %f seconds\n", total_test_time / 1000);
+    printf("Grind rate: %d\n", (int) ((NUM_TRAIN * EPOCHS) / total_train_time));
+    printf("Total training time: %f seconds\n", total_train_time);
+    printf("Total inference time: %f seconds\n", total_test_time);
     printf("Learning rate: %f\n", alpha);
     printf("Batch size: %d\n", m);
 }
