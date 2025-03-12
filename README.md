@@ -3,14 +3,14 @@
 ## Compile and run CPU native version
 ```bash
 make cpu_native
-export OMP_NUM_THREADS=<>
+export OMP_NUM_THREADS=<number of threads>
 ./model_cpu <Hidden layer 1 size> <Hidden layer 2 size> <Learning rate> <Batch size>
 ```
 
 ## Compile and run CPU BLAS version
 ```bash
 make cpu_blas
-export OMP_NUM_THREADS=<>
+export OMP_NUM_THREADS=<number of threads>
 ./model_blas <Hidden layer 1 size> <Hidden layer 2 size> <Learning rate> <Batch size>
 ```
 
@@ -28,7 +28,6 @@ make gpu_cublas
 
 ## Sample Output (for alpha = 0.1 and epochs = 50)
 ```bash
-Initialization done, training starts...
 Initialization done, training starts...
 Epoch 1 / 50, Avg. training loss = 0.484424,  Avg. validation loss = 0.396270, Test accuracy: 88.919998
 Epoch 2 / 50, Avg. training loss = 0.196956,  Avg. validation loss = 0.320438, Test accuracy: 90.760002
