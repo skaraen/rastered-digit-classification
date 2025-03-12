@@ -2,12 +2,13 @@
 #include <stdio.h>
 #include <math.h>
 #include <time.h>
-#include "mnist_gpu.h"
-#include "omp.h"
+#include "mnist.h"
+#include <cblas.h>
+#include <omp.h>
 
 #define INPUT_SIZE 784
 #define OUTPUT_SIZE 10
-#define EPOCHS 5
+#define EPOCHS 50
 #define TILE_SIZE 32 
 
 #define min(a,b) ((a) < (b) ? (a) : (b))
@@ -35,36 +36,29 @@ void shuffle_data(float* images, int* labels, int num_images, int img_dim) {
 }
 
 void matrix_add(float* res, float* a, float* b, int x, int y) {
-    #pragma omp parallel for
+    #pragma omp parallel for 
     for (int i = 0; i < x * y; i++) {
         res[i] = a[i] + b[i];
     }
 }
 
 void matrix_difference(float* res, float* a, float* b, int x, int y) {
-    #pragma omp parallel for
+    #pragma omp parallel for 
     for (int i = 0; i < x * y; i++) {
         res[i] = a[i] - b[i];
     }
 }
 
-void tiled_matrix_multiply(float* res, float* a, float* b, int x, int y, int z) {
-    #pragma omp parallel for 
-    for (int i0 = 0; i0 < x; i0 += TILE_SIZE) {
-        for (int k0 = 0; k0 < z; k0 += TILE_SIZE) {
-            for (int j0 = 0; j0 < y; j0 += TILE_SIZE) {
-                for (int i = i0; i < min(i0 + TILE_SIZE, x); i++) {
-                    for (int k = k0; k < min(k0 + TILE_SIZE, z); k++) {
-                        float sum = (j0 == 0) ? 0.0f : res[i * z + k];
-                        for (int j = j0; j < min(j0 + TILE_SIZE, y); j++) {
-                            sum += a[i * y + j] * b[j * z + k];
-                        }
-                        res[i * z + k] = sum;
-                    }
-                }
-            }
-        }
-    }
+void matrix_multiply_cblas(float* res, float* a, float* b, int x, int y, int z) {
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, x, z, y, 1.0f, a, y, b, z, 0.0f, res, z);
+}
+
+void matrix_multiply_transpose1_cblas(float *res, float *a, float *b, int x, int y, int z) {
+    cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, x, z, y, 1.0f, a, x, b, z, 0.0f, res, z);
+}
+
+void matrix_multiply_transpose2_cblas(float *res, float *a, float *b, int x, int y, int z) {
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, x, z, y, 1.0f, a, y, b, y, 0.0f, res, z);
 }
 
 void tiled_matrix_multiply_transpose1(float* res, float* a, float* b, int x, int y, int z) {
@@ -106,29 +100,38 @@ void tiled_matrix_multiply_transpose2(float* res, float* a, float* b, int x, int
 }
 
 void matrix_copy(float* res, float* a, int x, int y) {
-    #pragma omp parallel for
     for (int i = 0; i < x * y; i++) {
         res[i] = a[i];
     }
 }
 
 void weighted_product_relu(float* res, float* w, float* a, float* b, int x, int y, int z) {
-    tiled_matrix_multiply(res, w, a, x, y, z);
+    matrix_multiply_cblas(res, w, a, x, y, z);
     matrix_add(res, res, b, x, z);
-
-    #pragma omp parallel for
+    #pragma omp parallel for 
     for (int i = 0; i < x * z; i++) {
         res[i] = fmaxf(0, res[i]);
     }
 }
 
-void weighted_product_sigmoid(float* res, float* w, float* a, float* b, int x, int y, int z) {
-    tiled_matrix_multiply(res, w, a, x, y, z);
+void weighted_product_softmax(float* res, float* w, float* a, float* b, int x, int y, int z) {
+    matrix_multiply_cblas(res, w, a, x, y, z);
     matrix_add(res, res, b, x, z);
 
+    float sum[z];
     #pragma omp parallel for
-    for (int i = 0; i < x * z; i++) {
-        res[i] = 1.0f / (1.0f + expf(-res[i]));
+    for (int k = 0; k < z; k++) {
+        sum[k] = 0.0f;
+        for (int i = 0; i < x; i++) {
+            sum[k] += expf(res[i * z + k]);
+        }
+    }
+
+    #pragma omp parallel for
+    for (int i = 0; i < x; i++) {
+        for (int k = 0; k < z; k++) {
+            res[i * z + k] = expf(res[i * z + k]) / sum[k];
+        }
     }
 }
 
@@ -138,8 +141,7 @@ float* init_1D(int m, int n) {
 
 float* init_xavier(int m, int n) {
     float* mat = init_1D(m, n);
-
-    #pragma omp parallel for
+    #pragma omp parallel for 
     for (int i = 0; i < m * n; i++) {
         mat[i] = xavier(m, n);
     }
@@ -148,8 +150,7 @@ float* init_xavier(int m, int n) {
 
 float* init_zero(int m, int n) {
     float* mat = init_1D(m, n);
-
-    #pragma omp parallel for
+    #pragma omp parallel for 
     for (int i = 0; i < m * n; i++) {
         mat[i] = 0.0f;
     }
@@ -157,8 +158,7 @@ float* init_zero(int m, int n) {
 }
 
 void update_weights(float* w, float* d_w, int x, int y, float alpha, int m) {
-
-    #pragma omp parallel for
+    #pragma omp parallel for 
     for (int i = 0; i < x * y; i++) {
         w[i] -= (alpha * d_w[i]) / m;
         d_w[i] = 0.0f;
@@ -166,34 +166,19 @@ void update_weights(float* w, float* d_w, int x, int y, float alpha, int m) {
 }
 
 void reset(float *a, int x, int y) {
-
-    #pragma omp parallel for
+    #pragma omp parallel for 
     for (int i = 0; i < x * y; i++) {
         a[i] = 0.0f;
     }
 }
 
-void runBatch() {
-    
-}
-
 int main(int argc, char** argv) {
-    //printf("Hello\n");
     int n_h1 = atoi(argv[1]);
     int n_h2 = atoi(argv[2]);
     float alpha = atof(argv[3]);
     int m = atoi(argv[4]);
 
-    printf("Hello\n");
     load_mnist();
-    printf("Hi\n");
-
-    int nthreads;
-
-    #pragma omp parallel 
-    {
-        nthreads = omp_get_num_threads();
-    }
 
     // Initialize network layers
     float *in = init_1D(INPUT_SIZE, m);
@@ -230,7 +215,7 @@ int main(int argc, char** argv) {
 
     printf("Initialization done, training starts...\n");
 
-    double total_train_time, total_test_time = 0.0f;
+    double total_train_time = 0.0, total_test_time = 0.0;
     double start_time, end_time;
     
     for (int epoch = 0; epoch < EPOCHS; epoch++) {
@@ -245,7 +230,7 @@ int main(int argc, char** argv) {
         for (int k = 0; k < NUM_TRAIN / m; k++) {
             float C = 0.0f;
 
-            #pragma omp parallel for
+            #pragma omp parallel for 
             for (int x = 0; x < m; x++) {
                 for (int i = 0; i < INPUT_SIZE; i++) {
                     in[i * m + x] = train_image[(k * m) + x][i];
@@ -255,8 +240,8 @@ int main(int argc, char** argv) {
             // Feed-forward
             weighted_product_relu(h1, w1, in, b1, n_h1, INPUT_SIZE, m);
             weighted_product_relu(h2, w2, h1, b2, n_h2, n_h1, m);
-            weighted_product_sigmoid(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
-
+            weighted_product_softmax(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
+            
             for (int x = 0; x < m; x++) {
                 int id = k * m + x;
                 C += -log(out[train_label[id] * m + x]);
@@ -264,7 +249,6 @@ int main(int argc, char** argv) {
 
             // SGD calculation
             // Output layer
-            #pragma omp parallel for
             for (int x = 0; x < m; x++) {
                 int id = k * m + x;
                 y[train_label[id] * m + x] = 1.0f;
@@ -272,27 +256,25 @@ int main(int argc, char** argv) {
 
             matrix_difference(error_out, out, y, OUTPUT_SIZE, m);
             matrix_copy(d_b3, error_out, OUTPUT_SIZE, m);
-            tiled_matrix_multiply_transpose2(d_w3, error_out, h2, OUTPUT_SIZE, m, n_h2);
+            matrix_multiply_transpose2_cblas(d_w3, error_out, h2, OUTPUT_SIZE, m, n_h2);
 
             // Hidden layer 2
-            tiled_matrix_multiply_transpose1(y_h2, w3, error_out, OUTPUT_SIZE, n_h2, m);
-
-            #pragma omp parallel for
+            matrix_multiply_transpose1_cblas(y_h2, w3, error_out, n_h2, OUTPUT_SIZE, m);
+            #pragma omp parallel for 
             for (int i = 0; i < n_h2 * m; i++) {
                 error_h2[i] = (h2[i] > 0) ? y_h2[i] : 0;
                 d_b2[i] = error_h2[i];
             }
-            tiled_matrix_multiply_transpose2(d_w2, error_h2, h1, n_h2, m, n_h1);
+            matrix_multiply_transpose2_cblas(d_w2, error_h2, h1, n_h2, m, n_h1);
 
             // Hidden layer 1
-            tiled_matrix_multiply_transpose1(y_h1, w2, error_h2, n_h2, n_h1, m);
-
-            #pragma omp parallel for
+            matrix_multiply_transpose1_cblas(y_h1, w2, error_h2, n_h1, n_h2, m);
+            #pragma omp parallel for 
             for (int i = 0; i < n_h1 * m; i++) {
                 error_h1[i] = (h1[i] > 0) ? y_h1[i] : 0;
                 d_b1[i] = error_h1[i];
             }
-            tiled_matrix_multiply_transpose2(d_w1, error_h1, in, n_h1, m, INPUT_SIZE);
+            matrix_multiply_transpose2_cblas(d_w1, error_h1, in, n_h1, m, INPUT_SIZE);
 
             // Back propagation
             update_weights(w1, d_w1, n_h1, INPUT_SIZE, alpha, m);
@@ -321,7 +303,7 @@ int main(int argc, char** argv) {
 
             weighted_product_relu(h1, w1, in, b1, n_h1, INPUT_SIZE, m);
             weighted_product_relu(h2, w2, h1, b2, n_h2, n_h1, m);
-            weighted_product_sigmoid(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
+            weighted_product_softmax(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
 
             for (int x = 0; x < m; x++) {
                 int id = k * m + x;
@@ -334,8 +316,8 @@ int main(int argc, char** argv) {
         int fail_ct = 0;
         start_time = omp_get_wtime();
         for (int k = 0; k < NUM_TEST / m; k++) {
-            #pragma omp parallel for
             for (int x = 0; x < m; x++) {
+                #pragma omp parallel for 
                 for (int i = 0; i < INPUT_SIZE; i++) {
                     in[i * m + x] = test_image[k * m + x][i];
                 }
@@ -343,7 +325,7 @@ int main(int argc, char** argv) {
 
             weighted_product_relu(h1, w1, in, b1, n_h1, INPUT_SIZE, m);
             weighted_product_relu(h2, w2, h1, b2, n_h2, n_h1, m);
-            weighted_product_sigmoid(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
+            weighted_product_softmax(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
 
             for (int x = 0; x < m; x++) {
                 int prediction;
@@ -395,5 +377,4 @@ int main(int argc, char** argv) {
     printf("Total inference time: %f seconds\n", total_test_time);
     printf("Learning rate: %f\n", alpha);
     printf("Batch size: %d\n", m);
-    printf("Number of threads: %d\n", nthreads);
 }

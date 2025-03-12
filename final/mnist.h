@@ -11,10 +11,10 @@
 #define TEST_LABEL "../data/t10k-labels-idx1-ubyte"
 
 #define SIZE 784 // 28*28
-#define NUM_TRAIN 50000    // Reduced from 60000 to 50000
-#define NUM_VALID 10000    // New validation set size
+#define NUM_TRAIN 50000  
+#define NUM_VALID 10000
 #define NUM_TEST 10000
-#define ORIGINAL_TRAIN_SIZE 60000  // Original size for reading
+#define ORIGINAL_TRAIN_SIZE 60000
 #define LEN_INFO_IMAGE 4
 #define LEN_INFO_LABEL 2
 
@@ -30,17 +30,17 @@ int info_image[LEN_INFO_IMAGE];
 int info_label[LEN_INFO_LABEL];
 
 unsigned char train_image_char[NUM_TRAIN][SIZE];
-unsigned char valid_image_char[NUM_VALID][SIZE]; // New validation image array
+unsigned char valid_image_char[NUM_VALID][SIZE];
 unsigned char test_image_char[NUM_TEST][SIZE];
 unsigned char train_label_char[NUM_TRAIN][1];
-unsigned char valid_label_char[NUM_VALID][1]; // New validation label array
+unsigned char valid_label_char[NUM_VALID][1];
 unsigned char test_label_char[NUM_TEST][1];
 
 float train_image[NUM_TRAIN][SIZE];
-float valid_image[NUM_VALID][SIZE]; // New validation image array (float)
+float valid_image[NUM_VALID][SIZE];
 float test_image[NUM_TEST][SIZE];
 int train_label[NUM_TRAIN];
-int valid_label[NUM_VALID]; // New validation label array (int)
+int valid_label[NUM_VALID];
 int test_label[NUM_TEST];
 
 
@@ -63,7 +63,7 @@ void FlipLong(unsigned char * ptr)
 
 void read_mnist_char(char *file_path, int num_data, int len_info, int arr_n, unsigned char *data_char, int info_arr[])
 {
-    int i, j, k, fd;
+    int i, fd;
     unsigned char *ptr;
 
     if ((fd = open(file_path, O_RDONLY)) == -1) {
@@ -108,47 +108,44 @@ void label_char2int(int num_data, unsigned char data_label_char[][1], int data_l
 
 void load_mnist()
 {
-    // Allocate temporary arrays for the full training dataset
-    unsigned char (*full_train_image_char)[SIZE] = malloc(ORIGINAL_TRAIN_SIZE * sizeof(*full_train_image_char));
-    unsigned char (*full_train_label_char)[1] = malloc(ORIGINAL_TRAIN_SIZE * sizeof(*full_train_label_char));
+    unsigned char *full_train_image_char = (unsigned char *)malloc(ORIGINAL_TRAIN_SIZE * SIZE * sizeof(unsigned char));
+    unsigned char *full_train_label_char = (unsigned char *)malloc(ORIGINAL_TRAIN_SIZE * sizeof(unsigned char));
     
     if (full_train_image_char == NULL || full_train_label_char == NULL) {
         fprintf(stderr, "Failed to allocate memory for full training data\n");
         exit(-1);
     }
     
-    // Read the full training data (60000 samples)
-    read_mnist_char(TRAIN_IMAGE, ORIGINAL_TRAIN_SIZE, LEN_INFO_IMAGE, SIZE, &full_train_image_char[0][0], info_image);
-    read_mnist_char(TRAIN_LABEL, ORIGINAL_TRAIN_SIZE, LEN_INFO_LABEL, 1, &full_train_label_char[0][0], info_label);
+    read_mnist_char(TRAIN_IMAGE, ORIGINAL_TRAIN_SIZE, LEN_INFO_IMAGE, SIZE, full_train_image_char, info_image);
+    read_mnist_char(TRAIN_LABEL, ORIGINAL_TRAIN_SIZE, LEN_INFO_LABEL, 1, full_train_label_char, info_label);
     
-    // Split into training (first 50000) and validation (last 10000) sets
     for (int i = 0; i < NUM_TRAIN; i++) {
-        memcpy(train_image_char[i], full_train_image_char[i], SIZE);
-        train_label_char[i][0] = full_train_label_char[i][0];
+        for (int j = 0; j < SIZE; j++) {
+            train_image_char[i][j] = full_train_image_char[i * SIZE + j];
+        }
+        train_label_char[i][0] = full_train_label_char[i];
     }
     
     for (int i = 0; i < NUM_VALID; i++) {
-        memcpy(valid_image_char[i], full_train_image_char[NUM_TRAIN + i], SIZE);
-        valid_label_char[i][0] = full_train_label_char[NUM_TRAIN + i][0];
+        for (int j = 0; j < SIZE; j++) {
+            valid_image_char[i][j] = full_train_image_char[(NUM_TRAIN + i) * SIZE + j];
+        }
+        valid_label_char[i][0] = full_train_label_char[NUM_TRAIN + i];
     }
     
-    // Free the temporary arrays
     free(full_train_image_char);
     free(full_train_label_char);
     
-    // Convert char to float/int for training data
     image_char2float(NUM_TRAIN, train_image_char, train_image);
     label_char2int(NUM_TRAIN, train_label_char, train_label);
     
-    // Convert char to float/int for validation data
     image_char2float(NUM_VALID, valid_image_char, valid_image);
     label_char2int(NUM_VALID, valid_label_char, valid_label);
     
-    // Load test data as before
-    read_mnist_char(TEST_IMAGE, NUM_TEST, LEN_INFO_IMAGE, SIZE, &test_image_char[0][0], info_image);
+    read_mnist_char(TEST_IMAGE, NUM_TEST, LEN_INFO_IMAGE, SIZE, (unsigned char *)test_image_char, info_image);
     image_char2float(NUM_TEST, test_image_char, test_image);
     
-    read_mnist_char(TEST_LABEL, NUM_TEST, LEN_INFO_LABEL, 1, &test_label_char[0][0], info_label);
+    read_mnist_char(TEST_LABEL, NUM_TEST, LEN_INFO_LABEL, 1, (unsigned char *)test_label_char, info_label);
     label_char2int(NUM_TEST, test_label_char, test_label);
 }
 

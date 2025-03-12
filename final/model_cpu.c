@@ -2,12 +2,12 @@
 #include <stdio.h>
 #include <math.h>
 #include <time.h>
-#include "mnist_gpu.h"
+#include "mnist.h"
 #include "omp.h"
 
 #define INPUT_SIZE 784
 #define OUTPUT_SIZE 10
-#define EPOCHS 5
+#define EPOCHS 50
 #define TILE_SIZE 32 
 
 #define min(a,b) ((a) < (b) ? (a) : (b))
@@ -122,13 +122,25 @@ void weighted_product_relu(float* res, float* w, float* a, float* b, int x, int 
     }
 }
 
-void weighted_product_sigmoid(float* res, float* w, float* a, float* b, int x, int y, int z) {
+void weighted_product_softmax(float* res, float* w, float* a, float* b, int x, int y, int z) {
     tiled_matrix_multiply(res, w, a, x, y, z);
     matrix_add(res, res, b, x, z);
 
+    float sum[z];
+
     #pragma omp parallel for
-    for (int i = 0; i < x * z; i++) {
-        res[i] = 1.0f / (1.0f + expf(-res[i]));
+    for (int k = 0; k < z; k++) {
+        sum[k] = 0.0f;
+        for (int i = 0; i < x; i++) {
+            sum[k] += expf(res[i * z + k]);
+        }
+    }
+
+    #pragma omp parallel for
+    for (int i = 0; i < x; i++) {
+        for (int k = 0; k < z; k++) {
+            res[i * z + k] = expf(res[i * z + k]) / sum[k];
+        }
     }
 }
 
@@ -173,10 +185,6 @@ void reset(float *a, int x, int y) {
     }
 }
 
-void runBatch() {
-    
-}
-
 int main(int argc, char** argv) {
     //printf("Hello\n");
     int n_h1 = atoi(argv[1]);
@@ -184,9 +192,7 @@ int main(int argc, char** argv) {
     float alpha = atof(argv[3]);
     int m = atoi(argv[4]);
 
-    printf("Hello\n");
     load_mnist();
-    printf("Hi\n");
 
     int nthreads;
 
@@ -255,7 +261,7 @@ int main(int argc, char** argv) {
             // Feed-forward
             weighted_product_relu(h1, w1, in, b1, n_h1, INPUT_SIZE, m);
             weighted_product_relu(h2, w2, h1, b2, n_h2, n_h1, m);
-            weighted_product_sigmoid(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
+            weighted_product_softmax(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
 
             for (int x = 0; x < m; x++) {
                 int id = k * m + x;
@@ -321,7 +327,7 @@ int main(int argc, char** argv) {
 
             weighted_product_relu(h1, w1, in, b1, n_h1, INPUT_SIZE, m);
             weighted_product_relu(h2, w2, h1, b2, n_h2, n_h1, m);
-            weighted_product_sigmoid(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
+            weighted_product_softmax(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
 
             for (int x = 0; x < m; x++) {
                 int id = k * m + x;
@@ -343,7 +349,7 @@ int main(int argc, char** argv) {
 
             weighted_product_relu(h1, w1, in, b1, n_h1, INPUT_SIZE, m);
             weighted_product_relu(h2, w2, h1, b2, n_h2, n_h1, m);
-            weighted_product_sigmoid(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
+            weighted_product_softmax(out, w3, h2, b3, OUTPUT_SIZE, n_h2, m);
 
             for (int x = 0; x < m; x++) {
                 int prediction;
