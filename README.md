@@ -1,4 +1,4 @@
-# Project 3 - Final milestone
+# Rasterised Digit Classification on MNIST
 
 ## Compile and run CPU native version
 ```bash
