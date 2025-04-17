@@ -1,4 +1,4 @@
-# Rasterised Digit Classification on MNIST
+# Rasterized Digit Classification on MNIST
 
 ## Compile and run CPU native version
 ```bash
